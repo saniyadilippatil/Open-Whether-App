@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Weather App — Current & Forecast</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#3b82f6;--muted:#94a3b8;--glass: rgba(255,255,255,0.03)}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial;background:linear-gradient(180deg,#071029 0%, #07183a 100%);color:#e6eef8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .app{width:100%;max-width:960px}
+    header{display:flex;gap:12px;align-items:center;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:14px;box-shadow:0 6px 20px rgba(2,6,23,0.6);}
+    .search{display:flex;gap:8px}
+    input[type=text]{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:10px 12px;border-radius:8px;color:inherit;min-width:220px}
+    button{background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06)}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    .main-grid{display:grid;grid-template-columns:1fr 320px;gap:12px}
+    .weather-now{display:flex;gap:12px;align-items:center}
+    .temp{font-size:48px;font-weight:700}
+    .meta{color:var(--muted)}
+    .forecast{display:flex;gap:8px;overflow:auto;padding-top:8px}
+    .forecast .day{min-width:84px;background:var(--glass);padding:8px;border-radius:8px;text-align:center}
+    .history{display:flex;flex-direction:column;gap:8px}
+    .history button{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted);padding:8px;border-radius:8px;text-align:left}
+    @media (max-width:880px){.main-grid{grid-template-columns:1fr;}.temp{font-size:40px}}
+    footer{margin-top:12px;color:var(--muted);font-size:13px}
+    .error{color:#ffd2d2;background:#4a1b1b;padding:8px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Weather App</h1>
+      <div class="meta">Current weather + 5-day forecast</div>
+    </header>
+
+    <div class="card">
+      <div class="controls">
+        <div class="search">
+          <input id="cityInp" type="text" placeholder="Enter city or city, country code (e.g. Paris, FR)" />
+          <button id="searchBtn">Search</button>
+          <button id="geoBtn" class="ghost">Use my location</button>
+        </div>
+
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <label style="color:var(--muted);font-size:13px">Units</label>
+          <select id="unitSel" style="padding:8px;border-radius:8px;background:transparent;color:inherit;border:1px solid rgba(255,255,255,0.06)">
+            <option value="metric">Metric (°C)</option>
+            <option value="imperial">Imperial (°F)</option>
+            <option value="standard">Kelvin (K)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="main-grid">
+        <div>
+          <div id="nowCard" class="card" style="margin-bottom:12px">
+            <div id="nowContent">Search a city or use geolocation to start.</div>
+          </div>
+
+          <div id="forecastCard" class="card">
+            <h3 style="margin-top:0">5-day Forecast (3-hour steps)</h3>
+            <div id="forecast" class="forecast"></div>
+          </div>
+        </div>
+
+        <aside>
+          <div class="card">
+            <h3 style="margin-top:0">Search History</h3>
+            <div id="history" class="history"></div>
+            <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:10px 0" />
+            <div style="display:flex;gap:8px">
+              <button id="clearHistory" class="ghost">Clear</button>
+              <button id="helpBtn" class="ghost">Help</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer>
+        Note: This demo uses the OpenWeatherMap API. Replace the API key in the code or run the optional proxy server to keep the key secret.
+      </footer>
+    </div>
+  </div>
+
+<script>
+// -------- CONFIG
+const USE_PROXY = false; // set true to send requests to the Node proxy instead of calling OpenWeatherMap directly
+const OWM_API_KEY = 'USE_PROXY = true'; // <-- replace with your key (or use proxy)
+const API_BASE_URL = USE_PROXY ? '/api' : 'https://api.openweathermap.org/data/2.5';
+
+// -------- DOM
+const cityInp = document.getElementById('cityInp');
+const searchBtn = document.getElementById('searchBtn');
+const geoBtn = document.getElementById('geoBtn');
+const unitSel = document.getElementById('unitSel');
+const nowContent = document.getElementById('nowContent');
+const forecastEl = document.getElementById('forecast');
+const historyEl = document.getElementById('history');
+const clearHistory = document.getElementById('clearHistory');
+const helpBtn = document.getElementById('helpBtn');
+
+// -------- State
+let unit = localStorage.getItem('weather_unit') || 'metric';
+unitSel.value = unit;
+let history = JSON.parse(localStorage.getItem('weather_history') || '[]');
+renderHistory();
+
+// -------- Helpers
+function setError(msg){ nowContent.innerHTML = `<div class="error">${escapeHtml(msg)}</div>` }
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])) }
+
+function humanTime(ts, tzOffset=0){ // ts in seconds
+  const d = new Date((ts + tzOffset) * 1000);
+  return d.toLocaleString();
+}
+
+function iconUrl(icon){return `https://openweathermap.org/img/wn/${icon}@2x.png`}
+
+function saveHistory(q){ if(!q) return; history = [q, ...history.filter(x=>x.toLowerCase()!==q.toLowerCase())].slice(0,8); localStorage.setItem('weather_history', JSON.stringify(history)); renderHistory(); }
+function renderHistory(){ historyEl.innerHTML = history.length ? history.map(h=>`<button data-city="${escapeHtml(h)}">${escapeHtml(h)}</button>`).join('') : '<div style="color:var(--muted)">No recent searches</div>' };
+
+// -------- Fetch wrappers
+async function callOWM(path, params={}){
+  params.appid = OWM_API_KEY;
+  params.units = unit === 'standard' ? undefined : unit; // 'standard' means no units param
+  const qs = Object.entries(params).filter(([_,v])=>v!==undefined).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  const url = `${API_BASE_URL}/${path}?${qs}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+// -------- Renderers
+function renderNow(data){
+  const name = `${data.name || ''}${data.sys && data.sys.country ? ', ' + data.sys.country : ''}`;
+  const tz = data.timezone || 0;
+  const weather = data.weather && data.weather[0] ? data.weather[0] : {};
+  const temp = Math.round(data.main.temp);
+  const feels = Math.round(data.main.feels_like);
+  nowContent.innerHTML = `
+    <div class="weather-now">
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:110px">
+        <img src="${iconUrl(weather.icon||'01d')}" alt="" width="80" height="80">
+        <div style="font-weight:600">${escapeHtml(weather.main||'')}</div>
+      </div>
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:16px;color:var(--muted)">${escapeHtml(name)}</div>
+            <div class="temp">${temp}${unit === 'metric' ? '°C' : unit==='imperial' ? '°F' : 'K'}</div>
+            <div class="meta">Feels like ${feels} • Humidity ${data.main.humidity}% • Wind ${data.wind.speed} ${unit === 'metric' ? 'm/s' : unit==='imperial' ? 'mph' : 'm/s'}</div>
+          </div>
+          <div style="text-align:right;color:var(--muted);font-size:13px">Local: ${new Date((Date.now()) + tz*1000).toLocaleString()}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderForecast(list, tz=0){
+  if(!list || list.length===0){ forecastEl.innerHTML = '<div style="color:var(--muted)">No forecast available</div>'; return }
+  forecastEl.innerHTML = list.map(item=>{
+    const date = new Date((item.dt + tz) * 1000);
+    const label = date.toLocaleString(undefined,{weekday:'short', hour:'2-digit', minute:'2-digit'});
+    return `
+      <div class="day">
+        <div style="font-size:12px">${label}</div>
+        <img src="${iconUrl(item.weather[0].icon)}" width="50" height="50" alt="">
+        <div style="font-weight:600">${Math.round(item.main.temp)}${unit==='metric'?'°C':unit==='imperial'?'°F':'K'}</div>
+        <div style="font-size:12px;color:var(--muted)">${item.weather[0].main}</div>
+      </div>
+    `
+  }).join('')
+}
+
+// -------- Actions
+async function searchCity(q){
+  if(!q) return setError('Please enter a city name.');
+  nowContent.innerHTML = 'Loading...';
+  forecastEl.innerHTML = '';
+  try{
+    // get coords via direct call to weather endpoint (current weather by city)
+    const data = await callOWM('weather', {q});
+    renderNow(data);
+    saveHistory(q);
+    // 5 day forecast
+    const f = await callOWM('forecast', {lat: data.coord.lat, lon: data.coord.lon});
+    renderForecast(f.list.slice(0,10), f.city.timezone);
+  }catch(err){
+    console.error(err);
+    setError(err.message || 'Failed to fetch weather');
+  }
+}
+
+async function searchCoords(lat, lon){
+  nowContent.innerHTML = 'Loading...';
+  forecastEl.innerHTML = '';
+  try{
+    const data = await callOWM('weather', {lat, lon});
+    renderNow(data);
+    saveHistory(`${data.name}, ${data.sys.country}`);
+    const f = await callOWM('forecast', {lat, lon});
+    renderForecast(f.list.slice(0,10), f.city.timezone);
+  }catch(err){ console.error(err); setError(err.message || 'Failed to fetch weather') }
+}
+
+// events
+searchBtn.addEventListener('click', ()=>searchCity(cityInp.value.trim()));
+cityInp.addEventListener('keydown', e=>{ if(e.key==='Enter') searchCity(cityInp.value.trim()) });
+geoBtn.addEventListener('click', ()=>{
+  if(!navigator.geolocation) return setError('Geolocation not supported');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    searchCoords(pos.coords.latitude, pos.coords.longitude);
+  }, err=>{ setError('Geolocation denied or failed. Try searching by city.') });
+});
+unitSel.addEventListener('change', ()=>{ unit = unitSel.value; localStorage.setItem('weather_unit', unit); if(nowContent.innerText && !nowContent.innerText.includes('Search a city')){ // try re-search last history
+  const q = history[0]; if(q) searchCity(q);
+}});
+
+historyEl.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; const q = b.getAttribute('data-city'); searchCity(q); });
+clearHistory.addEventListener('click', ()=>{ history=[]; localStorage.removeItem('weather_history'); renderHistory(); });
+helpBtn.addEventListener('click', ()=>{
+  alert('How to use:\n1) Type a city name and press Search.\n2) Or click "Use my location".\n3) Toggle units using the dropdown.\nNote: replace the API key in the code or run the proxy server to keep the key secret.');
+});
+
+// small UX: if history exists, load the latest on open
+if(history.length) searchCity(history[0]);
+</script>
+</body>
+</html>
